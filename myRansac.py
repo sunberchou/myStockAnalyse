@@ -15,8 +15,9 @@ BS_DATE = time.strptime( '2016/02/01', '%Y/%m/%d' )
 def GetDataFromCSV( file_name = '' ):
     with codecs.open( file_name, 'r', 'gbk' ) as fp:
         reader = csv.reader( fp )
+        row = reader.__next__()
+        csv_name = row[0][7:11]
         pat = '\d{4}.\d{2}.\d{2}'
-        base = 1e-5
         data = []
         for row in reader:
             if None == re.match( pat, row[0] ) : continue
@@ -24,28 +25,29 @@ def GetDataFromCSV( file_name = '' ):
             new_d = time.strptime( row[0], '%Y/%m/%d' )
             if new_d < BS_DATE: continue
             b = float( row[4] )
-            if base < 1e-3 and b > 1e-1: base = b
-            b = ( b - base ) / base
             data.append( [row[0], b] )
-    return data
+    return data, csv_name
 
 
 def GetCleanData( data_x, data_y ):
+    i = 0
     j = 0
-    item_y = data_y[j]
     data_out = []
-    for item_x in data_x :
-        if j >= len( data_y ):
-            data_out.append([item_x[1], item_y[1] ])
-            continue
+    while i < len( data_x ) and j < len( data_y ):
+        item_x = data_x[i]
+        item_y = data_y[j]
         tx = time.strptime( item_x[0], '%Y/%m/%d' )
         ty = time.strptime( item_y[0], '%Y/%m/%d' )
-        while tx > ty :
+        if tx < ty: 
+            i += 1
+            continue
+        if tx > ty:
             j += 1
-            item_y = data_y[j]
-            ty = time.strptime( item_y[0], '%Y/%m/%d' )
+            continue
         data_out.append([item_x[1], item_y[1] ])
-
+        i += 1
+        j += 1
+        #end of while loop
     return data_out
 
 
@@ -82,7 +84,7 @@ def ransac(data,model,n,k,t,d):
         maybe_idxs, test_idxs = random_partition(n,data.shape[0])
         maybeinliers = data[maybe_idxs,:]
         test_points = data[test_idxs]
-        maybemodel = model.fit(maybeinliers)
+        maybemodel,mayberesides = model.fit(maybeinliers)
         test_err = model.get_error( test_points, maybemodel)
         also_idxs = test_idxs[test_err < t] # select indices of rows with accepted points
         alsoinliers = data[also_idxs,:]
@@ -93,14 +95,15 @@ def ransac(data,model,n,k,t,d):
             thiserr = numpy.mean( better_errs )
             this_d = len(alsoinliers)
             if this_d > best_d:
+                best_d = this_d
                 bestfit = bettermodel
                 besterr = thiserr
                 best_inlier_idxs = numpy.concatenate( (maybe_idxs, also_idxs) )
         iterations+=1
     if bestfit is None:
         log_msg("did not meet fit acceptance criteria")
-
-    return bestfit, {'inliers':best_inlier_idxs}
+    
+    return bestfit, {'inliers':best_inlier_idxs, 'lenth': best_d}
 
 def random_partition(n,n_data):
 #    """return n random rows of data (and also the other len(data)-n rows)"""
@@ -140,11 +143,11 @@ if __name__=='__main__':
     try:        #Get configurations form .config file
         config = ConfigParser()
         config.read( CONFIG_FILE )
-        rs_n = config.getint( 'RANSAC', 'MIN_NUM' )
+        rs_n = config.getint( 'RANSAC', 'N_FIT' )
         rs_k = config.getint( 'RANSAC', 'MAX_ITR' )
         t_str = config.get( 'RANSAC', 'THRES' )
         rs_t = float( t_str )
-        rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
+        rs_d = config.getint( 'RANSAC', 'N_ALSO' )
         I_STR = config.get( 'RANSAC', 'I_CONST' )
         I_CONST = float( I_STR )
 
@@ -156,7 +159,7 @@ if __name__=='__main__':
     n_outputs = 1
 
     fx = LOCAL_PATH + BASE_FILE
-    dataX = GetDataFromCSV( fx )
+    dataX, nameX = GetDataFromCSV( fx )
     f_set = LOCAL_PATH + FILE_SET
     file_list = []
     result = []
@@ -167,43 +170,58 @@ if __name__=='__main__':
         m = re.match( pat, str )
         if None != m: file_list.append( m.group() )
 
+    fw_name = LOCAL_PATH + 'ransac_result.txt'
+    with open( fw_name, 'w' ) as fw_p:
+        fw_p.write( '\r\n')
+        
     for fn in file_list:
         File_Y = LOCAL_PATH + fn
-        dataY = GetDataFromCSV( File_Y )
+        dataY, nameY = GetDataFromCSV( File_Y )
         dataXY = GetCleanData( dataX, dataY )
         all_data = numpy.array( dataXY )
+        dx = all_data[:,0]
+        mx = dx.mean()
+        if mx == 0:
+            log_msg( 'mean x is zero' )
+            break;
+        dx = (dx - mx )/mx
+        dy = all_data[:,1]
+        my = dy.mean()
+        if my == 0:
+            log_msg( 'mean y is zero' )
+            continue
+        dy = (dy - my)/my
+        all_data = numpy.vstack(( dx, dy )).T
         input_columns = range(n_inputs) # the first columns of the array
         output_columns = [n_inputs+i for i in range(n_outputs)] # the last columns of the array
-        debug = False
-        model = LinearLeastSquaresModel(input_columns,output_columns,debug=debug)
-
+        model = LinearLeastSquaresModel(input_columns,output_columns,debug=False)
+        
         log_msg( 'Deal with %s.'%fn )
         # run RANSAC algorithm
-        ransac_fit, ransac_data = ransac(all_data,model,
-            rs_n, rs_k, rs_t, rs_d ) # misc. parameters
+        ransac_fit, ransac_data = ransac(
+            all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
 
         if ransac_fit == None: continue
-        ransac_value = ransac_fit[0]
-        r_idx = fn
-        fw_name = LOCAL_PATH + r_idx + '.csv'
-        result_item = [r_idx, ransac_value]
+        ransac_value = ransac_fit[0,0]
+        r_idx = re.match( 'S.#\d{6}', fn ).group()
+        fw_name = LOCAL_PATH + 'o_' + r_idx + '.csv'
+        item = [r_idx, nameY, ransac_value, ransac_data['lenth']]
         r_dta = float( 0 )
         with open( fw_name, 'w' ) as fw_p:
-            for item in dataXY:
-                tmp = item[1]-item[0] * ransac_value
-                fw_p.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
-                    item[0],item[1], tmp, r_dta ))
+            for i in range( dx.size ):
+                tmp = dy[i]-dx[i] * ransac_value
                 r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
-        result_item.append( tmp )
-        result_item.append( r_dta )
-        result.append( result_item )
+                fw_p.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
+                    dx[i], dy[i], tmp, r_dta ))
+        item.append( tmp )
+        item.append( r_dta )
+        fw_name = LOCAL_PATH + 'ransac_result.txt'
+        with open( fw_name, 'a' ) as fw_p:
+            fw_p.write( '%s, %s, %.6f, %d, %.6f, %.6f\r\n'%(
+                item[0],item[1],item[2],item[3], item[4], item[5] ))
         #End to 'for' loop
 
 
-    fw_name = LOCAL_PATH + 'ransac_result.txt'
-    with open( fw_name, 'w' ) as fw_p:
-        for item in result:
-            fw_p.write( '%s, %.6f, %.6f, %.6f\r\n'%(item[0],item[1],item[2],item[3] ))
 
 
 
