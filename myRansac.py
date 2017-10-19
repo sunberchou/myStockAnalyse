@@ -7,16 +7,15 @@ import re
 from configparser import ConfigParser
 import traceback
 
-
 LOG_FILE = 'sz/l' + time.strftime( '%m%d.log', time.localtime())
-BS_DATE = time.strptime( '2016/02/01', '%Y/%m/%d' )
-
+BS_DATE = time.strptime( '2015/02/01', '%Y/%m/%d' )
 
 def GetDataFromCSV( file_name = '' ):
     with codecs.open( file_name, 'r', 'gbk' ) as fp:
         reader = csv.reader( fp )
         row = reader.__next__()
-        csv_name = row[0][7:11]
+        row0 = row[0].split()
+        csv_name = row0[1]
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
         for row in reader:
@@ -38,7 +37,7 @@ def GetCleanData( data_x, data_y ):
         item_y = data_y[j]
         tx = time.strptime( item_x[0], '%Y/%m/%d' )
         ty = time.strptime( item_y[0], '%Y/%m/%d' )
-        if tx < ty: 
+        if tx < ty:
             i += 1
             continue
         if tx > ty:
@@ -84,7 +83,7 @@ def ransac(data,model,n,k,t,d):
         maybe_idxs, test_idxs = random_partition(n,data.shape[0])
         maybeinliers = data[maybe_idxs,:]
         test_points = data[test_idxs]
-        maybemodel,mayberesides = model.fit(maybeinliers)
+        maybemodel = model.fit(maybeinliers)
         test_err = model.get_error( test_points, maybemodel)
         also_idxs = test_idxs[test_err < t] # select indices of rows with accepted points
         alsoinliers = data[also_idxs,:]
@@ -102,7 +101,7 @@ def ransac(data,model,n,k,t,d):
         iterations+=1
     if bestfit is None:
         log_msg("did not meet fit acceptance criteria")
-    
+
     return bestfit, {'inliers':best_inlier_idxs, 'lenth': best_d}
 
 def random_partition(n,n_data):
@@ -122,14 +121,16 @@ class LinearLeastSquaresModel:
         self.output_columns = output_columns
         self.debug = debug
     def fit(self, data):
-        A = numpy.vstack([data[:,i] for i in self.input_columns]).T
+        A0 = numpy.vstack([data[:,i] for i in self.input_columns])[0]
+        A = numpy.vstack([A0, numpy.ones(len(A0))]).T
         B = numpy.vstack([data[:,i] for i in self.output_columns]).T
         x,resids,rank,s = numpy.linalg.lstsq(A,B)
         return x
     def get_error( self, data, model):
         A = numpy.vstack([data[:,i] for i in self.input_columns]).T
         B = numpy.vstack([data[:,i] for i in self.output_columns]).T
-        B_fit = numpy.dot(A,model)
+        #B_fit = numpy.dot(A,model)
+        B_fit = A * model[0][0] + model[1][0]
         err_per_point = numpy.sum((B-B_fit)**2,axis=1) # sum squared error per row
         return err_per_point
 
@@ -150,10 +151,8 @@ if __name__=='__main__':
         rs_d = config.getint( 'RANSAC', 'N_ALSO' )
         I_STR = config.get( 'RANSAC', 'I_CONST' )
         I_CONST = float( I_STR )
-
     except Exception as e:
         log_msg( 'configration file %s open fail.'%CONFIG_FILE )
-
 
     n_inputs = 1
     n_outputs = 1
@@ -172,8 +171,8 @@ if __name__=='__main__':
 
     fw_name = LOCAL_PATH + 'ransac_result.txt'
     with open( fw_name, 'w' ) as fw_p:
-        fw_p.write( '\r\n')
-        
+        fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
+
     for fn in file_list:
         File_Y = LOCAL_PATH + fn
         dataY, nameY = GetDataFromCSV( File_Y )
@@ -195,7 +194,7 @@ if __name__=='__main__':
         input_columns = range(n_inputs) # the first columns of the array
         output_columns = [n_inputs+i for i in range(n_outputs)] # the last columns of the array
         model = LinearLeastSquaresModel(input_columns,output_columns,debug=False)
-        
+
         log_msg( 'Deal with %s.'%fn )
         # run RANSAC algorithm
         ransac_fit, ransac_data = ransac(
@@ -203,13 +202,14 @@ if __name__=='__main__':
 
         if ransac_fit == None: continue
         ransac_value = ransac_fit[0,0]
+        ransac_rest = ransac_fit[1,0]
         r_idx = re.match( 'S.#\d{6}', fn ).group()
         fw_name = LOCAL_PATH + 'o_' + r_idx + '.csv'
-        item = [r_idx, nameY, ransac_value, ransac_data['lenth']]
+        item = [r_idx, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
         r_dta = float( 0 )
         with open( fw_name, 'w' ) as fw_p:
             for i in range( dx.size ):
-                tmp = dy[i]-dx[i] * ransac_value
+                tmp = dy[i]-dx[i] * ransac_value-ransac_rest
                 r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
                 fw_p.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
                     dx[i], dy[i], tmp, r_dta ))
@@ -217,8 +217,8 @@ if __name__=='__main__':
         item.append( r_dta )
         fw_name = LOCAL_PATH + 'ransac_result.txt'
         with open( fw_name, 'a' ) as fw_p:
-            fw_p.write( '%s, %s, %.6f, %d, %.6f, %.6f\r\n'%(
-                item[0],item[1],item[2],item[3], item[4], item[5] ))
+            fw_p.write( '%s[%d], %s, %.6f, %.6f, %d, %.6f, %.6f\r\n'%(
+                item[0], dx.size,item[1],item[2],item[3], item[4], item[5], item[6] ))
         #End to 'for' loop
 
 
