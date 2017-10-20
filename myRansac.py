@@ -10,6 +10,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
+import os
 
 
 def GetDataFromCSV( file_name = '' ):
@@ -162,7 +163,7 @@ class qqExmail:
         message = MIMEMultipart()
         #添加邮件内容
         my_ip = os.popen('hostname -I').readlines()
-        str = 'FYI: This mail is sent from a raspberry pi\r\n'
+        str = 'FYI: This mail is sent from Ransac-machine\r\n'
         str += 'Which IP addr is %s'%my_ip[0]
         str += 'Device Code is %s'%DEV_CODE
         txt = MIMEText(str)
@@ -205,7 +206,6 @@ if __name__=='__main__':
         LOCAL_PATH = config.get( 'RANSAC', 'DATA_PATH' )
         BASE_FILE = config.get( 'RANSAC', 'BASE_FILE' )
         BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
-        FILE_SET = config.get( 'RANSAC', 'FILE_SET' )
         BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
 
     except Exception as e:
@@ -217,20 +217,15 @@ if __name__=='__main__':
 
     fx = LOCAL_PATH + BASE_FILE
     dataX, nameX = GetDataFromCSV( fx )
-    f_set = LOCAL_PATH + FILE_SET
-    file_list = []
-    result = []
-    with open( f_set, 'r' ) as fs:
-        file_listln = fs.readlines( )
+    file_listln = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
     pat = 'S[HZ]#\d{6}\.txt'
-    for str in file_listln:
-        m = re.match( pat, str )
-        if m is not None: file_list.append( m.group() )
-
-    fnList = LOCAL_PATH + 'ransac_result.txt'
     lstResult = []
-    for fn in file_list:
-        File_Y = LOCAL_PATH + fn
+    for fn in file_listln:
+        m = re.match( pat, str )
+        if m is None: continue
+        fname = m.group()
+        if fname == BASE_FILE:continue
+        File_Y = LOCAL_PATH + fname
         dataY, nameY = GetDataFromCSV( File_Y )
         dataXY = GetCleanData( dataX, dataY )
         all_data = numpy.array( dataXY )
@@ -274,6 +269,7 @@ if __name__=='__main__':
         lstResult.append( item )
         #End to 'for' loop
     lstResult.sort(key=lambda x:x[6])
+    fnList = LOCAL_PATH + 'ransac_result.txt'
     with open( fnList, 'w', encoding='utf-8') as fw_p:
         fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
         for item in lstResult:
