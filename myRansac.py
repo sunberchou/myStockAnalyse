@@ -1,4 +1,5 @@
-# -*- coding: utf-8 -*-
+#!\usr\bin\env python3
+#encoding: utf-8 
 import csv
 import codecs
 import time
@@ -17,29 +18,36 @@ def GetDataFromCSV( file_name = '' ):
     with codecs.open( file_name, 'r', 'gbk' ) as fp:
         reader = csv.reader( fp )
         row = reader.__next__()
-        row0 = row[0].split()
-        csv_name = row0[1]
+        lstr = row[0].split()
+        csv_name = lstr[1]
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
         for row in reader:
             if re.match( pat, row[0] ) is None: continue
-            if re.match( '\d+', row[4] ) is None: continue
-            new_d = time.strptime( row[0], '%Y/%m/%d' )
+            if lstr[2] == '日线':
+                dig = row[4]
+                tm_str = row[0] + ':0000'
+            else:
+                if re.match( '\d{4}', row[1] ) is None: continue
+                dig = row[5]
+                tm_str = row[0]+':'+row[1]
+            new_d = time.strptime( tm_str, '%Y/%m/%d:%H%M' )
             if new_d < BS_DATE: continue
-            b = float( row[4] )
-            data.append( [row[0], b] )
+            if re.match( '\d+', dig ) is None: continue
+            b = float( dig )
+            data.append( [new_d, b] )
     return data, csv_name
 
 
-def GetCleanData( data_x, data_y ):
+def MatchData( data_x, data_y ):
     i = 0
     j = 0
     data_out = []
     while i < len( data_x ) and j < len( data_y ):
         item_x = data_x[i]
         item_y = data_y[j]
-        tx = time.strptime( item_x[0], '%Y/%m/%d' )
-        ty = time.strptime( item_y[0], '%Y/%m/%d' )
+        tx = item_x[0]
+        ty = item_y[0]
         if tx < ty:
             i += 1
             continue
@@ -147,7 +155,6 @@ class qqExmail:
         self.doc = None
         return
     def send(self):
-        #发送邮件
         ret = True
         try:
             mail_host = smtplib.SMTP_SSL('smtp.exmail.qq.com', port=465)
@@ -159,29 +166,21 @@ class qqExmail:
             ret = False
         return ret
     def get_attach(self):
-        #构造邮件内容
         message = MIMEMultipart()
-        #添加邮件内容
         my_ip = os.popen('hostname -I').readlines()
-        str = 'FYI: This mail is sent from Ransac-machine\r\n'
+        str = 'FYI: This mail is sent from a Ransac dev\r\n'
         str += 'Which IP addr is %s'%my_ip[0]
-        str += 'Device Code is %s'%DEV_CODE
         txt = MIMEText(str)
         message.attach(txt)
-        if self.tag is not None:
-            #主题,最上面的一行
+        if self.tag is not None: 
             message['Subject'] = Header(self.tag,'utf-8')
-        if self.user is not None:
-            #显示在发件人
-            message['From'] = Header('RaspberryPi<%s>'%self.user, 'utf-8')
-        if len(self.to_list) > 0:
-            #收件人列表
+        if self.user is not None: 
+            message['From'] = Header('RansacDev<%s>'%self.user, 'utf-8')
+        if len(self.to_list) > 0: 
             message['To'] = Header(';'.join(self.to_list), 'utf-8')
-        if len(self.cc_list) > 0:
-            #抄送列表
+        if len(self.cc_list) > 0: 
             message['Cc'] = Header(';'.join(self.cc_list), 'utf-8')
-        if self.doc:
-            #估计任何文件都可以用base64，比如rar等
+        if self.doc: 
             fn = os.path.basename( self.doc )
             with open(self.doc,'rb') as f:
                 doc = MIMEText(f.read(), 'base64', 'utf-8')
@@ -207,7 +206,6 @@ if __name__=='__main__':
         BASE_FILE = config.get( 'RANSAC', 'BASE_FILE' )
         BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
         BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
-
     except Exception as e:
         exit(1)
 
@@ -217,17 +215,15 @@ if __name__=='__main__':
 
     fx = LOCAL_PATH + BASE_FILE
     dataX, nameX = GetDataFromCSV( fx )
-    file_listln = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
-    pat = 'S[HZ]#\d{6}\.txt'
+
+    file_list = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
     lstResult = []
-    for fn in file_listln:
-        m = re.match( pat, str )
-        if m is None: continue
-        fname = m.group()
-        if fname == BASE_FILE:continue
-        File_Y = LOCAL_PATH + fname
+    for fn in file_list:
+        File_Y = fn.rstrip('\n')
+        fy = os.path.basename( File_Y )
+        if fy == BASE_FILE: continue
         dataY, nameY = GetDataFromCSV( File_Y )
-        dataXY = GetCleanData( dataX, dataY )
+        dataXY = MatchData( dataX, dataY )
         all_data = numpy.array( dataXY )
         dx = all_data[:,0]
         mx = dx.mean()
@@ -246,7 +242,7 @@ if __name__=='__main__':
         output_columns = [n_inputs+i for i in range(n_outputs)] # the last columns of the array
         model = LinearLeastSquaresModel(input_columns,output_columns,debug=False)
 
-        log_msg( 'Deal with %s.'%fn )
+        log_msg( 'Deal with %s-%s.'%(fy, nameY) )
         # run RANSAC algorithm
         ransac_fit, ransac_data = ransac(
             all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
@@ -254,7 +250,7 @@ if __name__=='__main__':
         if ransac_fit is None: continue
         ransac_value = ransac_fit[0,0]
         ransac_rest = ransac_fit[1,0]
-        r_idx = re.match( 'S.#\d{6}', fn ).group()
+        r_idx = fy[ :-4]
         fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
         item = [r_idx, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
         r_dta = float( 0 )
@@ -278,6 +274,8 @@ if __name__=='__main__':
     myMail = qqExmail()
     myMail.doc = fnList
     myMail.send()
+    #end of file
+    
 
 
 
