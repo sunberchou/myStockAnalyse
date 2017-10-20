@@ -6,9 +6,11 @@ import numpy
 import re
 from configparser import ConfigParser
 import traceback
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.header import Header
 
-LOG_FILE = 'sz/l' + time.strftime( '%m%d.log', time.localtime())
-BS_DATE = time.strptime( '2015/02/01', '%Y/%m/%d' )
 
 def GetDataFromCSV( file_name = '' ):
     with codecs.open( file_name, 'r', 'gbk' ) as fp:
@@ -58,7 +60,6 @@ def log_msg( str = '' ):
     return
 
 
-def ransac(data,model,n,k,t,d):
 #fit model parameters to data using the RANSAC algorithm
 #This implementation written from pseudocode found at
 #http://en.wikipedia.org/w/index.php?title=RANSAC&oldid=116358182
@@ -74,6 +75,7 @@ def ransac(data,model,n,k,t,d):
 #    d - the number of close data values required to assert that a model fits well to data
 #Return:
 #    bestfit - model parameters which best fit the data (or nil if no good model is found)
+def ransac(data,model,n,k,t,d):
     iterations = 0
     bestfit = None
     besterr = numpy.inf
@@ -100,22 +102,21 @@ def ransac(data,model,n,k,t,d):
                 best_inlier_idxs = numpy.concatenate( (maybe_idxs, also_idxs) )
         iterations+=1
     if bestfit is None:
-        log_msg("did not meet fit acceptance criteria")
-
+        log_msg("Did not meet fit acceptance criteria")
     return bestfit, {'inliers':best_inlier_idxs, 'lenth': best_d}
 
+#return n random rows of data (and also the other len(data)-n rows)
 def random_partition(n,n_data):
-#    """return n random rows of data (and also the other len(data)-n rows)"""
     all_idxs = numpy.arange( n_data )
     numpy.random.shuffle(all_idxs)
     idxs1 = all_idxs[:n]
     idxs2 = all_idxs[n:]
     return idxs1, idxs2
 
+#linear system solved using linear least squares
+#This class serves as an example that fulfills the model interface
+#needed by the ransac() function.
 class LinearLeastSquaresModel:
-#    """linear system solved using linear least squares
-#    This class serves as an example that fulfills the model interface
-#    needed by the ransac() function.
     def __init__(self,input_columns,output_columns,debug=False):
         self.input_columns = input_columns
         self.output_columns = output_columns
@@ -134,26 +135,83 @@ class LinearLeastSquaresModel:
         err_per_point = numpy.sum((B-B_fit)**2,axis=1) # sum squared error per row
         return err_per_point
 
-LOCAL_PATH = 'sz/'
-BASE_FILE = 'SH#000001.txt'
-FILE_SET = 'file_set.txt'
-CONFIG_FILE = 'ransac.conf'
+
+class qqExmail:
+    def __init__(self):
+        self.user = 'zsb@cuteguide.cn'
+        self.passwd = 'zhou111Qt'
+        self.to_list = ['sunber.chou@qq.com']
+        self.cc_list = [self.user]
+        self.tag = 'Finally, Ransac get result!'
+        self.doc = None
+        return
+    def send(self):
+        #发送邮件
+        ret = True
+        try:
+            mail_host = smtplib.SMTP_SSL('smtp.exmail.qq.com', port=465)
+            mail_host.login(self.user,self.passwd)
+            receiver = self.to_list + self.cc_list
+            mail_host.sendmail(self.user, receiver, self.get_attach())
+            mail_host.close()
+        except Exception as e:
+            ret = False
+        return ret
+    def get_attach(self):
+        #构造邮件内容
+        message = MIMEMultipart()
+        #添加邮件内容
+        my_ip = os.popen('hostname -I').readlines()
+        str = 'FYI: This mail is sent from a raspberry pi\r\n'
+        str += 'Which IP addr is %s'%my_ip[0]
+        str += 'Device Code is %s'%DEV_CODE
+        txt = MIMEText(str)
+        message.attach(txt)
+        if self.tag is not None:
+            #主题,最上面的一行
+            message['Subject'] = Header(self.tag,'utf-8')
+        if self.user is not None:
+            #显示在发件人
+            message['From'] = Header('RaspberryPi<%s>'%self.user, 'utf-8')
+        if len(self.to_list) > 0:
+            #收件人列表
+            message['To'] = Header(';'.join(self.to_list), 'utf-8')
+        if len(self.cc_list) > 0:
+            #抄送列表
+            message['Cc'] = Header(';'.join(self.cc_list), 'utf-8')
+        if self.doc:
+            #估计任何文件都可以用base64，比如rar等
+            fn = os.path.basename( self.doc )
+            with open(self.doc,'rb') as f:
+                doc = MIMEText(f.read(), 'base64', 'utf-8')
+                doc["Content-Type"] = 'application/octet-stream'
+                doc["Content-Disposition"] = 'attachment; filename="%s"'%fn
+                message.attach(doc)
+        return message.as_string()
 
 if __name__=='__main__':
 
+    CONFIG_FILE = 'ransac.conf'
     try:        #Get configurations form .config file
         config = ConfigParser()
         config.read( CONFIG_FILE )
-        rs_n = config.getint( 'RANSAC', 'N_FIT' )
+        rs_n = config.getint( 'RANSAC', 'MIN_NUM' )
         rs_k = config.getint( 'RANSAC', 'MAX_ITR' )
         t_str = config.get( 'RANSAC', 'THRES' )
         rs_t = float( t_str )
-        rs_d = config.getint( 'RANSAC', 'N_ALSO' )
+        rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
         I_STR = config.get( 'RANSAC', 'I_CONST' )
         I_CONST = float( I_STR )
+        LOCAL_PATH = config.get( 'RANSAC', 'DATA_PATH' )
+        BASE_FILE = config.get( 'RANSAC', 'BASE_FILE' )
+        BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
+        FILE_SET = config.get( 'RANSAC', 'FILE_SET' )
+        BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
+        
     except Exception as e:
-        log_msg( 'configration file %s open fail.'%CONFIG_FILE )
+        exit(1)
 
+    LOG_FILE = LOCAL_PATH + 'log' + time.strftime( '%y%m%d.log', time.localtime())
     n_inputs = 1
     n_outputs = 1
 
@@ -169,8 +227,8 @@ if __name__=='__main__':
         m = re.match( pat, str )
         if None != m: file_list.append( m.group() )
 
-    fw_name = LOCAL_PATH + 'ransac_result.txt'
-    with open( fw_name, 'w' ) as fw_p:
+    fnList = LOCAL_PATH + 'ransac_result.txt'
+    with open( fnList, 'w' ) as fw_p:
         fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
 
     for fn in file_list:
@@ -204,22 +262,24 @@ if __name__=='__main__':
         ransac_value = ransac_fit[0,0]
         ransac_rest = ransac_fit[1,0]
         r_idx = re.match( 'S.#\d{6}', fn ).group()
-        fw_name = LOCAL_PATH + 'o_' + r_idx + '.csv'
+        fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
         item = [r_idx, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
         r_dta = float( 0 )
-        with open( fw_name, 'w' ) as fw_p:
+        with open( fnResult, 'w' ) as fpResult:
             for i in range( dx.size ):
                 tmp = dy[i]-dx[i] * ransac_value-ransac_rest
                 r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
-                fw_p.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
+                fpResult.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
                     dx[i], dy[i], tmp, r_dta ))
         item.append( tmp )
         item.append( r_dta )
-        fw_name = LOCAL_PATH + 'ransac_result.txt'
-        with open( fw_name, 'a' ) as fw_p:
+        with open( fnList, 'a' ) as fw_p:
             fw_p.write( '%s[%d], %s, %.6f, %.6f, %d, %.6f, %.6f\r\n'%(
                 item[0], dx.size,item[1],item[2],item[3], item[4], item[5], item[6] ))
         #End to 'for' loop
+    myMail = qqExmail()
+    myMail.doc = fnList
+    
 
 
 
