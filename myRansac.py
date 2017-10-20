@@ -21,8 +21,8 @@ def GetDataFromCSV( file_name = '' ):
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
         for row in reader:
-            if None == re.match( pat, row[0] ) : continue
-            if None == re.match( '\d+', row[4] ): continue
+            if re.match( pat, row[0] ) is None: continue
+            if re.match( '\d+', row[4] ) is None: continue
             new_d = time.strptime( row[0], '%Y/%m/%d' )
             if new_d < BS_DATE: continue
             b = float( row[4] )
@@ -207,7 +207,7 @@ if __name__=='__main__':
         BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
         FILE_SET = config.get( 'RANSAC', 'FILE_SET' )
         BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
-        
+
     except Exception as e:
         exit(1)
 
@@ -225,12 +225,10 @@ if __name__=='__main__':
     pat = 'S[HZ]#\d{6}\.txt'
     for str in file_listln:
         m = re.match( pat, str )
-        if None != m: file_list.append( m.group() )
+        if m is not None: file_list.append( m.group() )
 
     fnList = LOCAL_PATH + 'ransac_result.txt'
-    with open( fnList, 'w' ) as fw_p:
-        fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
-
+    lstResult = []
     for fn in file_list:
         File_Y = LOCAL_PATH + fn
         dataY, nameY = GetDataFromCSV( File_Y )
@@ -258,7 +256,7 @@ if __name__=='__main__':
         ransac_fit, ransac_data = ransac(
             all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
 
-        if ransac_fit == None: continue
+        if ransac_fit is None: continue
         ransac_value = ransac_fit[0,0]
         ransac_rest = ransac_fit[1,0]
         r_idx = re.match( 'S.#\d{6}', fn ).group()
@@ -273,13 +271,19 @@ if __name__=='__main__':
                     dx[i], dy[i], tmp, r_dta ))
         item.append( tmp )
         item.append( r_dta )
-        with open( fnList, 'a' ) as fw_p:
+        lstResult.append( item )
+        #End to 'for' loop
+    lstResult.sort(key=lambda x:x[6])
+    with open( fnList, 'w', encoding='utf-8') as fw_p:
+        fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
+        for item in lstResult:
             fw_p.write( '%s[%d], %s, %.6f, %.6f, %d, %.6f, %.6f\r\n'%(
                 item[0], dx.size,item[1],item[2],item[3], item[4], item[5], item[6] ))
-        #End to 'for' loop
     myMail = qqExmail()
     myMail.doc = fnList
-    
+    myMail.send()
+
+
 
 
 
