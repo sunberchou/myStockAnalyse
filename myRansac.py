@@ -1,5 +1,5 @@
 #!\usr\bin\env python3
-#encoding: utf-8 
+#encoding: utf-8
 import csv
 import codecs
 import time
@@ -64,8 +64,8 @@ def MatchData( data_x, data_y ):
 def log_msg( str = '' ):
     if str == '': return
     time_string = time.strftime( "%Y-%m-%d %X", time.localtime())
-    with open( LOG_FILE,'a' ) as log_file:
-        log_file.write( time_string + ': ' + str + '\r\n' )
+    with open( LOG_FILE,'a' ) as log_fp:
+        log_fp.write( time_string + ': ' + str + '\r\n' )
     return
 
 
@@ -172,25 +172,24 @@ class qqExmail:
         str += 'Which IP addr is %s'%my_ip[0]
         txt = MIMEText(str)
         message.attach(txt)
-        if self.tag is not None: 
+        if self.tag is not None:
             message['Subject'] = Header(self.tag,'utf-8')
-        if self.user is not None: 
+        if self.user is not None:
             message['From'] = Header('RansacDev<%s>'%self.user, 'utf-8')
-        if len(self.to_list) > 0: 
+        if len(self.to_list) > 0:
             message['To'] = Header(';'.join(self.to_list), 'utf-8')
-        if len(self.cc_list) > 0: 
+        if len(self.cc_list) > 0:
             message['Cc'] = Header(';'.join(self.cc_list), 'utf-8')
-        if self.doc: 
+        if self.doc:
             fn = os.path.basename( self.doc )
-            with open(self.doc,'rb') as f:
-                doc = MIMEText(f.read(), 'base64', 'utf-8')
+            with open(self.doc,'rb') as fp:
+                doc = MIMEText(fp.read(), 'base64', 'utf-8')
                 doc["Content-Type"] = 'application/octet-stream'
                 doc["Content-Disposition"] = 'attachment; filename="%s"'%fn
                 message.attach(doc)
         return message.as_string()
 
 if __name__=='__main__':
-
     CONFIG_FILE = 'ransac.conf'
     try:        #Get configurations form .config file
         config = ConfigParser()
@@ -199,89 +198,98 @@ if __name__=='__main__':
         rs_k = config.getint( 'RANSAC', 'MAX_ITR' )
         t_str = config.get( 'RANSAC', 'THRES' )
         rs_t = float( t_str )
-        rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
+        #rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
         I_STR = config.get( 'RANSAC', 'I_CONST' )
         I_CONST = float( I_STR )
         LOCAL_PATH = config.get( 'RANSAC', 'DATA_PATH' )
         BASE_FILE = config.get( 'RANSAC', 'BASE_FILE' )
         BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
         BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
+
+        LOG_FILE = LOCAL_PATH + 'log' + time.strftime( '%y%m%d.log', time.localtime())
+        n_inputs = 1
+        n_outputs = 1
+        fx = LOCAL_PATH + BASE_FILE
+        dataX, nameX = GetDataFromCSV( fx )
+
+        file_list = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
+        lstResult = []
+
     except Exception as e:
+        with open( LOG_FILE,'a' ) as log_fp:
+            traceback.print_exc( file = log_fp )
         exit(1)
 
-    LOG_FILE = LOCAL_PATH + 'log' + time.strftime( '%y%m%d.log', time.localtime())
-    n_inputs = 1
-    n_outputs = 1
-
-    fx = LOCAL_PATH + BASE_FILE
-    dataX, nameX = GetDataFromCSV( fx )
-
-    file_list = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
-    lstResult = []
     for fn in file_list:
-        File_Y = fn.rstrip('\n')
-        fy = os.path.basename( File_Y )
-        if fy == BASE_FILE: continue
-        dataY, nameY = GetDataFromCSV( File_Y )
-        dataXY = MatchData( dataX, dataY )
-        all_data = numpy.array( dataXY )
-        dx = all_data[:,0]
-        mx = dx.mean()
-        if mx == 0:
-            log_msg( 'mean x is zero' )
-            break;
-        dx = (dx - mx )/mx
-        dy = all_data[:,1]
-        my = dy.mean()
-        if my == 0:
-            log_msg( 'mean y is zero' )
-            continue
-        dy = (dy - my)/my
-        all_data = numpy.vstack(( dx, dy )).T
-        input_columns = range(n_inputs) # the first columns of the array
-        output_columns = [n_inputs+i for i in range(n_outputs)] # the last columns of the array
-        model = LinearLeastSquaresModel(input_columns,output_columns,debug=False)
+        try:
+            File_Y = fn.rstrip('\n')
+            fy = os.path.basename( File_Y )
+            if fy == BASE_FILE: continue
+            pat = 'S[HZ]#\d{6}\.txt'
+            m = re.match( pat, fy )
+            if m is None: continue
+            dataY, nameY = GetDataFromCSV( File_Y )
+            dataXY = MatchData( dataX, dataY )
+            all_data = numpy.array( dataXY )
+            dx = all_data[:,0]
+            mx = dx.mean()
+            if mx == 0:
+                log_msg( 'mean x is zero' )
+                break;
+            dx = (dx - mx )/mx
+            dy = all_data[:,1]
+            my = dy.mean()
+            if my == 0:
+                log_msg( 'mean y is zero' )
+                continue
+            dy = (dy - my)/my
+            all_data = numpy.vstack(( dx, dy )).T
+            input_columns = range(n_inputs) # the first columns of the array
+            output_columns = [n_inputs+i for i in range(n_outputs)] # the last columns of the array
+            model = LinearLeastSquaresModel(input_columns,output_columns,debug=False)
 
-        log_msg( 'Deal with %s-%s.'%(fy, nameY) )
-        # run RANSAC algorithm
-        ransac_fit, ransac_data = ransac(
-            all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
+            log_msg( 'Deal with %s...'%fy )
+            # run RANSAC algorithm
+            rs_d = int(dx.size / 3)
+            ransac_fit, ransac_data = ransac(
+                all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
 
-        if ransac_fit is None: continue
-        ransac_value = ransac_fit[0,0]
-        ransac_rest = ransac_fit[1,0]
-        r_idx = fy[ :-4]
-        fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
-        item = [r_idx, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
-        r_dta = float( 0 )
-        with open( fnResult, 'w' ) as fpResult:
-            for i in range( dx.size ):
-                tmp = dy[i]-dx[i] * ransac_value-ransac_rest
-                r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
-                fpResult.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
-                    dx[i], dy[i], tmp, r_dta ))
-        item.append( tmp )
-        item.append( r_dta )
-        lstResult.append( item )
-        #End to 'for' loop
-    lstResult.sort(key=lambda x:x[6])
-    fnList = LOCAL_PATH + 'ransac_result.txt'
-    with open( fnList, 'w', encoding='utf-8') as fw_p:
-        fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
-        for item in lstResult:
-            fw_p.write( '%s[%d], %s, %.6f, %.6f, %d, %.6f, %.6f\r\n'%(
-                item[0], dx.size,item[1],item[2],item[3], item[4], item[5], item[6] ))
-    myMail = qqExmail()
-    myMail.doc = fnList
-    myMail.send()
+            if ransac_fit is None: continue
+            ransac_value = ransac_fit[0,0]
+            ransac_rest = ransac_fit[1,0]
+            r_idx = fy[ :-4]
+            fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
+            item = [r_idx, dx.size, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
+            r_dta = float( 0 )
+            with open( fnResult, 'w' ) as fp:
+                for i in range( dx.size ):
+                    tmp = dy[i]-dx[i] * ransac_value-ransac_rest
+                    r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
+                    fp.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
+                        dx[i], dy[i], tmp, r_dta ))
+            item.append( r_dta )
+            lstResult.append( item )
+            #End to 'for' loop
+        except Exception as e:
+            with open( LOG_FILE,'a' ) as log_file:
+                traceback.print_exc( file = log_file )
+    try:
+        lstResult.sort(key=lambda x:x[6])
+        lstResult.reverse()
+        fnFinal = LOCAL_PATH + 'final' + BASE_FILE
+        i = 0
+        with open( fnFinal, 'w', encoding='utf-8') as fp:
+            fp.write( '\titem[count],\tname,\tr_val,\tr_res,\tn_fit,\tf_dta\r\n')
+            for item in lstResult:
+                fp.write( '%d, %s[%d], %s, %.6f, %.6f, %d, %.6f\r\n'%(
+                    i, item[0], item[1],item[2],item[3], item[4], item[5], item[6] ))
+                i += 1
+        myMail = qqExmail()
+        myMail.doc = fnFinal
+        myMail.send()
+    except Exception as e:
+        with open( LOG_FILE,'a' ) as log_file:
+            traceback.print_exc( file = log_file )
+    exit( 0 )
     #end of file
-    
-
-
-
-
-
-
-
-
 
