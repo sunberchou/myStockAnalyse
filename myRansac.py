@@ -308,7 +308,7 @@ if __name__=='__main__':
         fnFinal = LOCAL_PATH + 'Final' + BASE_FILE
         i = 1
         with open( fnFinal, 'w', encoding='utf-8') as fp:
-            fp.write( '%d(of %d) items calculated.'%(len(lstResult), len(lstStock)))
+            fp.write( '%d(of %d) items calculated.\r\n'%(len(lstResult), len(lstStock)))
             fp.write( '\titem[count],\tname,\tr_val,\tr_res,\tn_fit,\tf_dta\r\n')
             for item in lstResult:
                 fp.write( '%d, %s[%d], %s, %.6f, %.6f, %d, %.6f\r\n'%(
