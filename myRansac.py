@@ -22,20 +22,42 @@ def GetDataFromCSV( file_name = '' ):
         csv_name = lstr[1]
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
+        i = 0
+        b = 0.0
         for row in reader:
             if re.match( pat, row[0] ) is None: continue
             if lstr[2] == '日线':
                 dig = row[4]
-                tm_str = row[0] + ':0000'
+                new_d = time.strptime( row[0], '%Y/%m/%d' )
+                if new_d < BS_DATE: continue
+                if re.match( '\d+', dig ) is None: continue
+                if CALC_TYPE == 'WEEKLY':
+                    b += float( dig )
+                    i += 1
+                    if new_d.tm_wday == 4:
+                        data.append( [new_d, b/i] )
+                        i = 0
+                        b = 0.0
+                else:
+                    b = float( dig )
+                    data.append( [new_d, b] )
             else:
                 if re.match( '\d{4}', row[1] ) is None: continue
                 dig = row[5]
                 tm_str = row[0]+':'+row[1]
-            new_d = time.strptime( tm_str, '%Y/%m/%d:%H%M' )
-            if new_d < BS_DATE: continue
-            if re.match( '\d+', dig ) is None: continue
-            b = float( dig )
-            data.append( [new_d, b] )
+                new_d = time.strptime( tm_str, '%Y/%m/%d:%H%M' )
+                if new_d < BS_DATE: continue
+                if re.match( '\d+', dig ) is None: continue
+                if CALC_TYPE == 'HOURLY':
+                    b += float( dig )
+                    i += 1
+                    if row[1][-2:] in ['00', '30'] :
+                        data.append( [new_d, b/i] )
+                        i = 0
+                        b = 0.0
+                else:
+                    b = float( dig )
+                    data.append( [new_d, b] )
     return data, csv_name
 
 
@@ -54,7 +76,7 @@ def MatchData( data_x, data_y ):
         if tx > ty:
             j += 1
             continue
-        data_out.append([item_x[1], item_y[1] ])
+        data_out.append([item_x[0], item_x[1], item_y[1] ])
         i += 1
         j += 1
         #end of while loop
@@ -198,29 +220,31 @@ if __name__=='__main__':
         rs_k = config.getint( 'RANSAC', 'MAX_ITR' )
         t_str = config.get( 'RANSAC', 'THRES' )
         rs_t = float( t_str )
-        #rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
+        rs_d = config.getint( 'RANSAC', 'N_CLOSE' )
         I_STR = config.get( 'RANSAC', 'I_CONST' )
         I_CONST = float( I_STR )
         LOCAL_PATH = config.get( 'RANSAC', 'DATA_PATH' )
         BASE_FILE = config.get( 'RANSAC', 'BASE_FILE' )
         BASE_DATE = config.get( 'RANSAC', 'BASE_DATE' )
         BS_DATE = time.strptime( BASE_DATE, '%Y/%m/%d' )
+        CALC_TYPE = config.get( 'RANSAC', 'CALC_TYPE' )
 
         LOG_FILE = LOCAL_PATH + 'log' + time.strftime( '%y%m%d.log', time.localtime())
+        with open( LOG_FILE,'a' ) as log_fp:
+            log_fp.write( 'New logs begins here' + '\r\n' )
+        
         n_inputs = 1
         n_outputs = 1
         fx = LOCAL_PATH + BASE_FILE
         dataX, nameX = GetDataFromCSV( fx )
 
-        file_list = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
+        lstStock = os.popen( 'ls %s*.txt'%LOCAL_PATH ).readlines()
         lstResult = []
 
     except Exception as e:
-        with open( LOG_FILE,'a' ) as log_fp:
-            traceback.print_exc( file = log_fp )
         exit(1)
 
-    for fn in file_list:
+    for fn in lstStock:
         try:
             File_Y = fn.rstrip('\n')
             fy = os.path.basename( File_Y )
@@ -230,14 +254,16 @@ if __name__=='__main__':
             if m is None: continue
             dataY, nameY = GetDataFromCSV( File_Y )
             dataXY = MatchData( dataX, dataY )
-            all_data = numpy.array( dataXY )
-            dx = all_data[:,0]
+            #dataXY is list of [tm,x,y]
+            lx = [ xy[1] for xy in dataXY ]
+            ly = [ xy[2] for xy in dataXY ]
+            dx = numpy.array(lx)
             mx = dx.mean()
             if mx == 0:
                 log_msg( 'mean x is zero' )
                 break;
             dx = (dx - mx )/mx
-            dy = all_data[:,1]
+            dy = numpy.array(ly)
             my = dy.mean()
             if my == 0:
                 log_msg( 'mean y is zero' )
@@ -250,7 +276,7 @@ if __name__=='__main__':
 
             log_msg( 'Deal with %s...'%fy )
             # run RANSAC algorithm
-            rs_d = int(dx.size / 3)
+            #rs_d = int(dx.size / 3)
             ransac_fit, ransac_data = ransac(
                 all_data, model, rs_n, rs_k, rs_t, rs_d ) # misc. parameters
 
@@ -259,16 +285,19 @@ if __name__=='__main__':
             ransac_rest = ransac_fit[1,0]
             r_idx = fy[ :-4]
             fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
-            item = [r_idx, dx.size, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
+            itemR = [r_idx, dx.size, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
             r_dta = float( 0 )
             with open( fnResult, 'w' ) as fp:
-                for i in range( dx.size ):
+                i = 0
+                for it in dataXY:
                     tmp = dy[i]-dx[i] * ransac_value-ransac_rest
                     r_dta = r_dta * ( 1-I_CONST ) + tmp * I_CONST
-                    fp.write( '%.6f, %.6f, %.6f, %.6f\r\n'%(
-                        dx[i], dy[i], tmp, r_dta ))
-            item.append( r_dta )
-            lstResult.append( item )
+                    tStr = time.strftime( '%Y/%m/%d:%H%M', it[0] )
+                    fp.write( '%s, %.6f, %.6f, %.6f, %.6f\r\n'%( tStr,
+                        it[1], it[2], tmp, r_dta ))
+                    i += 1
+            itemR.append( r_dta )
+            lstResult.append( itemR )
             #End to 'for' loop
         except Exception as e:
             with open( LOG_FILE,'a' ) as log_file:
@@ -276,9 +305,10 @@ if __name__=='__main__':
     try:
         lstResult.sort(key=lambda x:x[6])
         lstResult.reverse()
-        fnFinal = LOCAL_PATH + 'final' + BASE_FILE
-        i = 0
+        fnFinal = LOCAL_PATH + 'Final' + BASE_FILE
+        i = 1
         with open( fnFinal, 'w', encoding='utf-8') as fp:
+            fp.write( '%d(of %d) items calculated.'%(len(lstResult), len(lstStock)))
             fp.write( '\titem[count],\tname,\tr_val,\tr_res,\tn_fit,\tf_dta\r\n')
             for item in lstResult:
                 fp.write( '%d, %s[%d], %s, %.6f, %.6f, %d, %.6f\r\n'%(
