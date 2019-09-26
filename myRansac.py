@@ -17,7 +17,7 @@ import os
 def GetDataFromCSV( file_name = '' ):
     with codecs.open( file_name, 'r', 'gbk' ) as fp:
         reader = csv.reader( fp )
-        row = reader.__next__()
+        row = reader.__next__() #first line on top
         lstr = row[0].split()
         csv_name = lstr[1]
         if lstr[2] == '日线':
@@ -26,8 +26,12 @@ def GetDataFromCSV( file_name = '' ):
             idx = 5
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
+        row = reader.__next__() #skip second line on top
         for row in reader:
-            lstr = row[0].split()
+            if len(row[0]) > 10:
+                lstr = row[0].split()
+            else:
+                lstr = row
             if re.match( pat, lstr[0] ) is None: continue
             if re.match( '\d+', lstr[idx] ) is None: continue
             new_d = time.strptime( lstr[0], '%Y/%m/%d' )
@@ -218,10 +222,12 @@ if __name__=='__main__':
     lstResult = []
     for fn in file_list:
         File_Y = fn.rstrip('\n')
-        if File_Y == BASE_FILE:
+        if File_Y == fx:
             continue
         dataY, nameY = GetDataFromCSV( File_Y )
         dataXY = GetCleanData( dataX, dataY )
+        if len(dataXY) < 2*rs_d:
+            continue
         all_data = numpy.array( dataXY )
         dx = all_data[:,0]
         mx = dx.mean()
