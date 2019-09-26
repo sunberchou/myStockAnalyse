@@ -27,12 +27,13 @@ def GetDataFromCSV( file_name = '' ):
         pat = '\d{4}.\d{2}.\d{2}'
         data = []
         for row in reader:
-            if re.match( pat, row[0] ) is None: continue
-            if re.match( '\d+', row[idx] ) is None: continue
-            new_d = time.strptime( row[0], '%Y/%m/%d' )
+            lstr = row[0].split()
+            if re.match( pat, lstr[0] ) is None: continue
+            if re.match( '\d+', lstr[idx] ) is None: continue
+            new_d = time.strptime( lstr[0], '%Y/%m/%d' )
             if new_d < BS_DATE: continue
-            b = float( row[idx] )
-            data.append( [row[0], b] )
+            b = float( lstr[idx] )
+            data.append( [lstr[0], b] )
     return data, csv_name
 
 
@@ -147,7 +148,7 @@ class qqExmail:
         self.user = 'zsb@cuteguide.cn'
         self.passwd = 'zhou111Qt'
         self.to_list = ['sunber.chou@qq.com']
-        self.cc_list = [self.user]
+        self.cc_list = ['zhousongbo@hanmingtech.com']
         self.tag = 'Finally, Ransac get result!'
         self.doc = None
         return
@@ -217,6 +218,8 @@ if __name__=='__main__':
     lstResult = []
     for fn in file_list:
         File_Y = fn.rstrip('\n')
+        if File_Y == BASE_FILE:
+            continue
         dataY, nameY = GetDataFromCSV( File_Y )
         dataXY = GetCleanData( dataX, dataY )
         all_data = numpy.array( dataXY )
@@ -224,7 +227,7 @@ if __name__=='__main__':
         mx = dx.mean()
         if mx == 0:
             log_msg( 'mean x is zero' )
-            break;
+            break
         dx = (dx - mx )/mx
         dy = all_data[:,1]
         my = dy.mean()
@@ -247,7 +250,7 @@ if __name__=='__main__':
         ransac_rest = ransac_fit[1,0]
         r_idx = os.path.basename( File_Y )[ :-4]
         fnResult = LOCAL_PATH + 'o' + r_idx + '.csv'
-        item = [r_idx, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
+        item = [r_idx, dx.size, nameY, ransac_value, ransac_rest, ransac_data['lenth']]
         r_dta = float( 0 )
         with open( fnResult, 'w' ) as fpResult:
             for i in range( dx.size ):
@@ -259,13 +262,13 @@ if __name__=='__main__':
         item.append( r_dta )
         lstResult.append( item )
         #End to 'for' loop
-    lstResult.sort(key=lambda x:x[6])
-    fnList = LOCAL_PATH + 'ransac_result.txt'
+    lstResult.sort(key=lambda x:x[7], reverse = True )
+    fnList = LOCAL_PATH + 'A_result.txt'
     with open( fnList, 'w', encoding='utf-8') as fw_p:
-        fw_p.write( 'item[count], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
+        fw_p.write( 'item[n], name, r_val, r_res, n_fit, f_v, f_dta\r\n')
         for item in lstResult:
             fw_p.write( '%s[%d], %s, %.6f, %.6f, %d, %.6f, %.6f\r\n'%(
-                item[0], dx.size,item[1],item[2],item[3], item[4], item[5], item[6] ))
+                item[0], item[1],item[2],item[3], item[4], item[5], item[6], item[7] ))
     myMail = qqExmail()
     myMail.doc = fnList
     myMail.send()
